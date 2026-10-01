@@ -65,18 +65,26 @@ public class LiveTimeClient {
 
         String host;
         int port;
+        // True when the address came from memory/arguments rather than a fresh
+        // prompt - that is what makes a stale config.txt confusing.
+        boolean remembered;
 
         if (args.length > 0) {
             // Explicit host given on the command line: use it and remember it.
             host = args[0].trim();
+            if (host.isEmpty()) {
+                System.err.println("Error: the server address cannot be empty.");
+                System.err.println("Usage: java LiveTimeClient <host> [port]");
+                System.exit(1);
+                return;
+            }
             port = parsePort(args.length > 1 ? args[1] : String.valueOf(DEFAULT_PORT));
             if (port < 0) {
                 return;
             }
-            if (!host.isEmpty()) {
-                remember(configPath, host, port);
-                System.out.println("[i] Remembering " + host + ":" + port + " in " + CONFIG_FILE);
-            }
+            remember(configPath, host, port);
+            System.out.println("[i] Remembering " + host + ":" + port + " in " + CONFIG_FILE);
+            remembered = true;
         } else {
             // No arguments: try to recall the server from config.txt.
             String[] saved = recall(configPath);
@@ -95,6 +103,7 @@ public class LiveTimeClient {
                 }
                 remember(configPath, host, port);
                 System.out.println("[i] Saved to " + CONFIG_FILE + " - next time I will not ask again.");
+                remembered = false;
             } else {
                 host = saved[0];
                 port = parsePort(saved[1]);
@@ -103,11 +112,64 @@ public class LiveTimeClient {
                 }
                 System.out.println("[i] Using remembered server " + host + ":" + port
                         + " from " + CONFIG_FILE);
+                remembered = true;
             }
         }
 
+        // ---- Steps 1-3: connect and stream ---------------------------------
+        // If the connection cannot be made, do NOT just give up: a remembered
+        // config.txt from an earlier test is the most common reason, so offer
+        // to enter a different address and save it.
+        while (true) {
+            String failure = stream(host, port);
+
+            if (failure == null) {
+                // The stream ended normally, so we are done.
+                return;
+            }
+
+            System.err.println();
+            System.err.println("Error: " + failure);
+            if (remembered) {
+                System.err.println("That address came from " + CONFIG_FILE
+                        + ", so an old or incorrect value may be remembered.");
+            }
+            System.err.println();
+
+            System.out.println("[i] Enter a different address, or press Ctrl+C to quit.");
+            String newHost = askHost();
+            if (newHost == null) {
+                System.err.println("No new address entered - giving up.");
+                System.err.println("Tip: run \"java LiveTimeClient --forget\" to clear "
+                        + CONFIG_FILE + ".");
+                System.exit(1);
+                return;
+            }
+            int newPort = askPort();
+            if (newPort < 0) {
+                return;
+            }
+
+            remember(configPath, newHost, newPort);
+            System.out.println("[i] Retrying with " + newHost + ":" + newPort + " ...");
+            host = newHost;
+            port = newPort;
+            remembered = true;
+        }
+    }
+
+    /**
+     * Connects to {@code host:port} and streams the time until the connection
+     * ends.
+     *
+     * @return {@code null} when the stream ended normally (the server closed
+     *         the connection); otherwise a human-readable message describing
+     *         why the connection could not be established.
+     */
+    private static String stream(String host, int port) {
         // ---- Step 1: socket() -----------------------------------------------
-        // try-with-resources guarantees the socket is closed on every path.
+        // try-with-resources guarantees the socket is closed on every path,
+        // including the failure paths that return an error message.
         try (Socket socket = new Socket()) {
 
             // ---- Step 2: connect() ------------------------------------------
@@ -128,14 +190,25 @@ public class LiveTimeClient {
                          socket.getInputStream(), StandardCharsets.UTF_8);
                  BufferedReader in = new BufferedReader(r)) {
 
+                int updates = 0;
                 while (true) {
                     String line = in.readLine();
                     if (line == null) {
                         // EOF: the server closed the stream.
                         System.out.println();
-                        System.out.println("[-] Server closed the connection.");
-                        return;
+                        if (updates == 0) {
+                            System.out.println("[-] The server closed the connection without sending "
+                                    + "any updates.");
+                            System.out.println("    This is the behaviour of the one-shot TimeServer. "
+                                    + "Make sure LiveTimeServer (not TimeServer) is running on port "
+                                    + port + ".");
+                        } else {
+                            System.out.println("[-] Server closed the connection after "
+                                    + updates + " update(s).");
+                        }
+                        return null;
                     }
+                    updates++;
                     // Carriage return ("\r") rewrites the same terminal line, so
                     // the timestamp visibly ticks instead of scrolling away.
                     System.out.print("\rServer time: " + line + "   ");
@@ -144,24 +217,15 @@ public class LiveTimeClient {
             }
 
         } catch (UnknownHostException e) {
-            System.err.println();
-            System.err.println("Error: cannot resolve host \"" + host
-                    + "\" - check the spelling in " + CONFIG_FILE + ".");
-            System.exit(1);
+            return "cannot resolve host \"" + host + "\" - check the spelling";
         } catch (ConnectException e) {
-            System.err.println();
-            System.err.println("Error: connection refused by " + host + ":" + port
-                    + " - is LiveTimeServer running on that machine?");
-            System.exit(1);
+            return "connection refused by " + host + ":" + port
+                    + " - is LiveTimeServer running on that machine?";
         } catch (SocketTimeoutException e) {
-            System.err.println();
-            System.err.println("Error: no update received for " + READ_TIMEOUT_MS
-                    + " ms - the server may have stopped.");
-            System.exit(1);
+            return "no update received for " + READ_TIMEOUT_MS
+                    + " ms - connected, but the server sent nothing";
         } catch (IOException e) {
-            System.err.println();
-            System.err.println("Error: I/O problem - " + e.getMessage());
-            System.exit(1);
+            return "I/O problem - " + e.getMessage();
         }
     }
 

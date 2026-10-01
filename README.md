@@ -94,12 +94,12 @@ The server terminal now shows the client that connected:
 ### Terminal 2 — the client (second machine, same network)
 
 1. On the **server** machine find its LAN IP:
-   - Windows: `ipconfig` → look for *IPv4 Address*, e.g. `192.168.56.1`
+   - Windows: `ipconfig` → look for *IPv4 Address*, e.g. `192.168.1.166`
    - Linux/macOS: `ip addr` / `ifconfig`
 2. On the **client** machine run:
 
 ```powershell
-java TimeClient 192.168.56.1 6000
+java TimeClient 192.168.1.166 6000
 ```
 
 Both machines must be on the same subnet and the **port must be allowed through
@@ -149,8 +149,8 @@ java LiveTimeServer 6000 500        # twice a second
 
 # Terminal 2 - the client
 java LiveTimeClient                 # asks for the server, then remembers it
-java LiveTimeClient 192.168.56.1    # skip the prompt, and remember this
-java LiveTimeClient 192.168.56.1 6000
+java LiveTimeClient 192.168.1.166    # skip the prompt, and remember this
+java LiveTimeClient 192.168.1.166 6000
 java LiveTimeClient --forget        # wipe config.txt, ask again next time
 ```
 
@@ -160,32 +160,31 @@ Server output:
 LiveTimeServer streaming on port 6000 (bound to 0.0.0.0)
 Update interval: 1000 ms
 Press Ctrl+C to stop.
-[+] Client connected: 192.168.56.1:56615
-[-] Client disconnected: 192.168.56.1:56615
+[+] Client connected: 192.168.1.166:56615
+[-] Client disconnected: 192.168.1.166:56615
 ```
 
 Client output (the `\r` redraws one line, so it ticks in place):
 
 ```
 [i] No server address saved yet in config.txt.
-Enter the server IP address or hostname: 192.168.56.1
+Enter the server IP address or hostname: 192.168.1.166
 Enter the server port [6000]:
 [i] Saved to config.txt - next time I will not ask again.
-[+] Connected to 192.168.56.1:6000 - streaming time, press Ctrl+C to stop.
+[+] Connected to 192.168.1.166:6000 - streaming time, press Ctrl+C to stop.
 
 Server time: 2026-10-01 21:49:09 EAT
 ```
 
 ### config.txt — the "memory"
 
-On first run the client asks for the server address and saves it **next to the
-program** in `config.txt`:
+On first run the client asks for the server address and saves it in `config.txt`:
 
 ```properties
 #Remembered LiveTimeServer address. Edit or delete this file to change it.
 #Thu Oct 01 21:49:05 EAT 2026
 port=6000
-host=192.168.56.1
+host=192.168.1.166
 ```
 
 On every later run it prints `[i] Using remembered server ... from config.txt`
@@ -195,6 +194,44 @@ folder to another PC, type the server IP once, and it works from then on.
 - It is a plain `key=value` file, so you can also **edit it by hand** to point at
   a different machine.
 - `java LiveTimeClient --forget` deletes it when you want to be asked afresh.
+
+### If it "won't connect"
+
+Because the address is remembered, a `config.txt` saved during an earlier test
+is the most common reason the client fails to connect while `TimeClient` (which
+always takes the address from the command line) works fine. The classic case is
+`host=localhost` saved on the server PC, then the same folder copied to the
+client PC: `localhost` now points at the client itself, so nothing answers.
+
+`LiveTimeClient` handles this instead of dying silently: if the connection
+fails it explains that the address came from `config.txt`, then **asks for a
+different address and saves it**:
+
+```
+[i] Using remembered server localhost:6000 from config.txt
+
+Error: connection refused by localhost:6000 - is LiveTimeServer running on that machine?
+That address came from config.txt, so an old or incorrect value may be remembered.
+
+[i] Enter a different address, or press Ctrl+C to quit.
+Enter the server IP address or hostname: 192.168.1.166
+Enter the server port [6000]:
+[i] Retrying with 192.168.1.166:6000 ...
+[+] Connected to 192.168.1.166:6000 - streaming time, press Ctrl+C to stop.
+```
+
+It also tells you when it reaches a one-shot server by mistake: connecting to a
+`TimeServer` sends one line and closes, which the client reports as *"This is the
+behaviour of the one-shot TimeServer"*.
+
+> On Windows, `localhost` in `config.txt` is only correct when the client runs on
+> the **same** PC as the server. Across the network use the server's LAN IPv4
+> address (find it with `ipconfig`), and make sure you pick the address of the
+> adapter actually on your LAN — **not** a virtual adapter. On this machine that
+> was the trap: `192.168.56.1` was the *VirtualBox Host-Only* adapter and was
+> unreachable from the other PC; the real LAN address was `192.168.1.166`
+> (Wi-Fi 2).
+
 - The prompt uses the real console when there is one, and falls back to piped
   stdin when launched from an IDE or with redirected input.
 - Passing a host on the command line **also** writes it to `config.txt`, so an
@@ -287,11 +324,11 @@ with *any* TCP client, not just yours.
    data, then the teardown:
 
 ```
-1  0.000  192.168.56.1  →  192.168.56.1   SYN              (client → server)
-2  0.003  192.168.56.1  ←  192.168.56.1   SYN, ACK         (server → client)
-3  0.004  192.168.56.1  →  192.168.56.1   ACK              (client → server)   ← connection established
-4  0.008  192.168.56.1  ←  192.168.56.1   PSH, ACK  Len=27 (server → client)  ← the time string
-5  0.011  192.168.56.1  →  192.168.56.1   FIN, ACK         (server → client)   ← server closes
+1  0.000  192.168.1.166  →  192.168.1.166   SYN              (client → server)
+2  0.003  192.168.1.166  ←  192.168.1.166   SYN, ACK         (server → client)
+3  0.004  192.168.1.166  →  192.168.1.166   ACK              (client → server)   ← connection established
+4  0.008  192.168.1.166  ←  192.168.1.166   PSH, ACK  Len=27 (server → client)  ← the time string
+5  0.011  192.168.1.166  →  192.168.1.166   FIN, ACK         (server → client)   ← server closes
 ```
 
 Packets 1-3 are the SYN / SYN-ACK / ACK handshake. This is the practical
@@ -438,7 +475,7 @@ All paths below were executed and confirmed on JDK 17.0.12:
 
 - Compiles cleanly with `javac -Xlint:all` (zero warnings)
 - Client over `localhost`, `127.0.0.1` and `::1` (IPv6)
-- Client over the machine's LAN IP `192.168.56.1`
+- Client over the machine's LAN IP `192.168.1.166`
 - Default port (omitted) and explicit port
 - Four sequential clients, each logged with a distinct ephemeral source port
 - Server survives a client that connects and disconnects abruptly
