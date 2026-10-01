@@ -1,0 +1,8 @@
+# Assignment prompt - not part of the project source
+prompt.txt
+
+# Compiled Java bytecode
+*.class
+
+# Client-generated server address memory
+config.txt
